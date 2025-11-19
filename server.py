@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, UploadFile, File
 from backend.db import conectar
 from backend.s3_client import (
@@ -5,7 +6,6 @@ from backend.s3_client import (
     listar_archivos,
     eliminar_archivo
 )
-import os
 
 app = FastAPI()
 
@@ -13,7 +13,6 @@ app = FastAPI()
 @app.get("/health")
 def health():
     return {"status": "ok"}
-
 
 # ---------- USUARIOS ----------
 @app.get("/usuarios")
@@ -24,7 +23,6 @@ def listar_usuarios():
     data = cursor.fetchall()
     conn.close()
     return data
-
 
 @app.post("/login")
 def login(usuario: str, contrasena: str):
@@ -38,30 +36,27 @@ def login(usuario: str, contrasena: str):
     conn.close()
     return {"login": bool(user)}
 
-
 # ---------- S3: SUBIR ARCHIVOS ----------
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
-    # Guardar archivo temporalmente
     temp_path = f"/tmp/{file.filename}"
-    
+
+    # Guardar archivo temporal
     with open(temp_path, "wb") as f:
         f.write(await file.read())
 
-    # Usar la función REAL de tu s3_client
+    # Subir a AWS S3
     subir_archivo(temp_path)
 
-    # Borrar archivo temporal
+    # Eliminar archivo temporal
     os.remove(temp_path)
 
     return {"status": "uploaded", "filename": file.filename}
-
 
 # ---------- S3: LISTAR ARCHIVOS ----------
 @app.get("/files")
 def files():
     return listar_archivos()
-
 
 # ---------- S3: ELIMINAR ARCHIVO ----------
 @app.delete("/files/{filename}")
