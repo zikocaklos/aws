@@ -1,0 +1,407 @@
+_init_.py
+__version__ = "1.0.0"
+-----------------------------
+admin_gui.py
+import customtkinter as ctk
+from tkinter import messagebox
+import mysql.connector
+from backend.db import conectar
+from backend.users import crear_usuario, hash_password
+
+
+def crear_admin_gui(user):
+    root = ctk.CTk()
+    root.title("Panel de Administración")
+    root.geometry("900x500")
+    root.resizable(False, False)
+
+    # --- Colores base ---
+    sidebar_color = "#1f1f1f"
+    main_bg = "#2a2a2a"
+
+    # --- Frames principales ---
+    frame_left = ctk.CTkFrame(root, width=200, fg_color=sidebar_color)
+    frame_left.pack(side="left", fill="y")
+
+    frame_right = ctk.CTkFrame(root, fg_color=main_bg)
+    frame_right.pack(side="right", fill="both", expand=True)
+
+    # --- Bienvenida ---
+    label_welcome = ctk.CTkLabel(frame_left, text=f"👋 {user['nombre']}", font=("Arial", 16, "bold"))
+    label_welcome.pack(pady=20)
+
+    # --- Funciones internas ---
+    def clear_right():
+        for widget in frame_right.winfo_children():
+            widget.destroy()
+
+    # =============================
+    # 1️⃣ Ver usuarios
+    # =============================
+    def ver_usuarios():
+        clear_right()
+        title = ctk.CTkLabel(frame_right, text="👥 Lista de Usuarios", font=("Arial", 18, "bold"))
+        title.pack(pady=10)
+
+        text = ctk.CTkTextbox(frame_right, width=600, height=300)
+        text.pack(pady=10)
+
+        conn = conectar()
+        cursor = conn.cursor()
+        cursor.execute("SELECT id, nombre, rol FROM usuarios")
+        data = cursor.fetchall()
+        conn.close()
+        text.delete("1.0", "end")
+        for row in data:
+            text.insert("end", f"ID: {row[0]} | Usuario: {row[1]} | Rol: {row[2]}\n")
+
+    # =============================
+    # 2️⃣ Crear usuario
+    # =============================
+    def crear_usuario_gui():
+        clear_right()
+        title = ctk.CTkLabel(frame_right, text="➕ Crear Usuario", font=("Arial", 18, "bold"))
+        title.pack(pady=10)
+
+        entry_nombre = ctk.CTkEntry(frame_right, placeholder_text="Nombre de usuario")
+        entry_nombre.pack(pady=5)
+        entry_pass = ctk.CTkEntry(frame_right, placeholder_text="Contraseña", show="*")
+        entry_pass.pack(pady=5)
+        combo_rol = ctk.CTkComboBox(frame_right, values=["empleado", "admin"])
+        combo_rol.set("empleado")
+        combo_rol.pack(pady=5)
+
+        def crear():
+            nombre = entry_nombre.get().strip()
+            contrasena = entry_pass.get().strip()
+            rol = combo_rol.get()
+
+            if not nombre or not contrasena:
+                messagebox.showerror("Error", "Completa todos los campos")
+                return
+            try:
+                crear_usuario(nombre, contrasena, rol)
+                messagebox.showinfo("Éxito", f"Usuario '{nombre}' creado correctamente")
+            except mysql.connector.Error as e:
+                messagebox.showerror("Error", f"No se pudo crear el usuario:\n{e}")
+
+        btn_guardar = ctk.CTkButton(frame_right, text="Guardar Usuario", command=crear)
+        btn_guardar.pack(pady=10)
+
+    # =============================
+    # 3️⃣ Modificar usuario
+    # =============================
+    def modificar_usuario_gui():
+        clear_right()
+        title = ctk.CTkLabel(frame_right, text="✏️ Modificar Usuario", font=("Arial", 18, "bold"))
+        title.pack(pady=10)
+
+        entry_nombre = ctk.CTkEntry(frame_right, placeholder_text="Nombre de usuario a modificar")
+        entry_nombre.pack(pady=5)
+        entry_nueva_pass = ctk.CTkEntry(frame_right, placeholder_text="Nueva contraseña (opcional)", show="*")
+        entry_nueva_pass.pack(pady=5)
+        combo_rol = ctk.CTkComboBox(frame_right, values=["empleado", "admin"])
+        combo_rol.set("empleado")
+        combo_rol.pack(pady=5)
+
+        def modificar():
+            nombre = entry_nombre.get().strip()
+            nueva_pass = entry_nueva_pass.get().strip()
+            nuevo_rol = combo_rol.get()
+
+            if not nombre:
+                messagebox.showerror("Error", "Debes ingresar el nombre del usuario a modificar")
+                return
+
+            conn = conectar()
+            cursor = conn.cursor()
+
+            cursor.execute("SELECT id FROM usuarios WHERE nombre=%s", (nombre,))
+            if not cursor.fetchone():
+                messagebox.showerror("Error", "El usuario no existe")
+                conn.close()
+                return
+
+            if nueva_pass:
+                cursor.execute("UPDATE usuarios SET contrasena=%s WHERE nombre=%s", (hash_password(nueva_pass), nombre))
+            cursor.execute("UPDATE usuarios SET rol=%s WHERE nombre=%s", (nuevo_rol, nombre))
+            conn.commit()
+            conn.close()
+            messagebox.showinfo("Éxito", f"Usuario '{nombre}' modificado correctamente")
+
+        btn_guardar = ctk.CTkButton(frame_right, text="Aplicar Cambios", command=modificar)
+        btn_guardar.pack(pady=10)
+
+    # =============================
+    # 4️⃣ Ver historial
+    # =============================
+    def ver_historial():
+        clear_right()
+        title = ctk.CTkLabel(frame_right, text="🧾 Historial de Actividades", font=("Arial", 18, "bold"))
+        title.pack(pady=10)
+
+        filter_frame = ctk.CTkFrame(frame_right)
+        filter_frame.pack(pady=5)
+
+        entry_filtro = ctk.CTkEntry(filter_frame, placeholder_text="Filtrar por usuario o acción...")
+        entry_filtro.pack(side="left", padx=5)
+
+        text = ctk.CTkTextbox(frame_right, width=650, height=300)
+        text.pack(pady=10)
+
+        def cargar_historial(filtro=""):
+            conn = conectar()
+            cursor = conn.cursor()
+            if filtro:
+                filtro = f"%{filtro}%"
+                cursor.execute(
+                    "SELECT usuario, accion, archivo, fecha FROM historial WHERE usuario LIKE %s OR accion LIKE %s ORDER BY fecha DESC",
+                    (filtro, filtro),
+                )
+            else:
+                cursor.execute("SELECT usuario, accion, archivo, fecha FROM historial ORDER BY fecha DESC")
+            data = cursor.fetchall()
+            conn.close()
+
+            text.delete("1.0", "end")
+            if not data:
+                text.insert("end", "No hay registros.\n")
+            else:
+                for row in data:
+                    text.insert("end", f"{row[3]} | {row[0]} {row[1]} '{row[2]}'\n")
+
+        def aplicar_filtro():
+            filtro = entry_filtro.get().strip()
+            cargar_historial(filtro)
+
+        btn_filtrar = ctk.CTkButton(filter_frame, text="Filtrar", width=70, command=aplicar_filtro)
+        btn_filtrar.pack(side="left", padx=5)
+
+        cargar_historial()
+
+    # =============================
+    # 5️⃣ Logout
+    # =============================
+    def logout():
+        confirm = messagebox.askyesno("Cerrar sesión", "¿Seguro que deseas salir?")
+        if confirm:
+            root.destroy()
+
+    # --- Botones del menú lateral ---
+    btn_usuarios = ctk.CTkButton(frame_left, text="👥 Ver Usuarios", width=180, command=ver_usuarios)
+    btn_crear = ctk.CTkButton(frame_left, text="➕ Crear Usuario", width=180, command=crear_usuario_gui)
+    btn_modificar = ctk.CTkButton(frame_left, text="✏️ Modificar Usuario", width=180, command=modificar_usuario_gui)
+    btn_historial = ctk.CTkButton(frame_left, text="🧾 Ver Historial", width=180, command=ver_historial)
+    btn_logout = ctk.CTkButton(frame_left, text="🚪 Logout", width=180, fg_color="#A83232", hover_color="#8B1E1E", command=logout)
+
+    btn_usuarios.pack(pady=5)
+    btn_crear.pack(pady=5)
+    btn_modificar.pack(pady=5)
+    btn_historial.pack(pady=5)
+    btn_logout.pack(side="bottom", pady=20)
+
+    # --- Mostrar historial por defecto ---
+    ver_historial()
+
+    root.mainloop()
+---------------------
+gui.py
+import customtkinter as ctk
+import tkinter as tk
+from tkinter import filedialog, messagebox
+from PIL import Image, ImageTk
+
+from backend.s3_client import (
+    subir_archivo,
+    listar_archivos,
+    descargar_archivo,
+    eliminar_archivo,
+    obtener_imagen,
+)
+from backend.utils import previsualizar_imagen
+
+
+def crear_gui(user):
+    """
+    Interfaz principal del sistema S3 para usuarios.
+    'user' es un diccionario con las claves: id, nombre, rol.
+    """
+    ctk.set_appearance_mode("dark")
+    ctk.set_default_color_theme("blue")
+
+    root = ctk.CTk()
+    root.title(f"S3_Bucket - Usuario: {user['nombre']} ({user['rol']})")
+    root.geometry("650x520")
+
+    # --- Parte superior ---
+    frame_top = ctk.CTkFrame(root, corner_radius=10, fg_color="#1f1f1f")
+    frame_top.pack(pady=10, padx=10, fill="x")
+
+    label_user = ctk.CTkLabel(frame_top, text=f"👤 {user['nombre']}", font=("Arial", 14))
+    label_user.pack(side="left", padx=10)
+
+    btn_subir = ctk.CTkButton(frame_top, text="Subir archivo")
+    btn_subir.pack(side="left", padx=10, pady=10)
+
+    btn_descargar = ctk.CTkButton(frame_top, text="Descargar")
+    btn_descargar.pack(side="left", padx=10, pady=10)
+
+    btn_eliminar = ctk.CTkButton(frame_top, text="Eliminar")
+    btn_eliminar.pack(side="left", padx=10, pady=10)
+
+    btn_listar = ctk.CTkButton(frame_top, text="Listar archivos")
+    btn_listar.pack(side="left", padx=10, pady=10)
+
+    btn_logout = ctk.CTkButton(frame_top, text="Cerrar sesión", fg_color="#A83232", hover_color="#8B1E1E", width=120)
+    btn_logout.pack(side="right", padx=10)
+
+    # --- Parte inferior ---
+    frame_bottom = ctk.CTkFrame(root, corner_radius=10)
+    frame_bottom.pack(pady=10, padx=10, fill="both", expand=True)
+
+    listbox_frame = ctk.CTkFrame(frame_bottom, corner_radius=5)
+    listbox_frame.pack(side="left", fill="both", expand=True, padx=10, pady=10)
+
+    scrollbar = tk.Scrollbar(listbox_frame)
+    scrollbar.pack(side="right", fill="y")
+
+    listbox = tk.Listbox(listbox_frame, yscrollcommand=scrollbar.set)
+    listbox.pack(fill="both", expand=True)
+    scrollbar.config(command=listbox.yview)
+
+    frame_preview = ctk.CTkFrame(frame_bottom, width=250, height=250, corner_radius=10)
+    frame_preview.pack(side="right", padx=10, pady=10)
+    frame_preview.pack_propagate(False)
+
+    label_img = ctk.CTkLabel(frame_preview, text="Previsualización")
+    label_img.pack(expand=True)
+
+    # --- Funciones internas ---
+    def actualizar_lista():
+        listbox.delete(0, tk.END)
+        archivos = listar_archivos()
+        if archivos:
+            for f in archivos:
+                listbox.insert(tk.END, f)
+        else:
+            listbox.insert(tk.END, "No hay archivos en el bucket.")
+        label_img.configure(image='', text="Previsualización")
+
+    def subir():
+        path = filedialog.askopenfilename(title="Seleccionar archivo a subir")
+        if path:
+            subir_archivo(path, user["nombre"])
+            actualizar_lista()
+            messagebox.showinfo("Éxito", "Archivo subido correctamente.")
+
+    def descargar():
+        sel = listbox.curselection()
+        if sel:
+            file_name = listbox.get(sel)
+            if file_name.startswith("No hay"):
+                return
+            save_path = filedialog.asksaveasfilename(initialfile=file_name)
+            if save_path:
+                descargar_archivo(file_name, save_path, user["nombre"])
+                messagebox.showinfo("Éxito", f"Archivo '{file_name}' descargado correctamente.")
+
+    def eliminar():
+        sel = listbox.curselection()
+        if sel:
+            file_name = listbox.get(sel)
+            if file_name.startswith("No hay"):
+                return
+            if messagebox.askyesno("Confirmar", f"¿Eliminar '{file_name}'?"):
+                eliminar_archivo(file_name, user["nombre"])
+                actualizar_lista()
+                messagebox.showinfo("Eliminado", f"Archivo '{file_name}' eliminado correctamente.")
+
+    def previsualizar(event):
+        sel = listbox.curselection()
+        if sel:
+            file_name = listbox.get(sel)
+            if file_name.lower().endswith(('.png', '.jpg', '.jpeg', '.gif')):
+                data = obtener_imagen(file_name)
+                photo = previsualizar_imagen(data)
+                if photo:
+                    label_img.configure(image=photo, text="")
+                    label_img.image = photo
+                else:
+                    label_img.configure(image='', text="Error al mostrar imagen")
+            else:
+                label_img.configure(image='', text="(Sin vista previa disponible)")
+
+    def logout():
+        confirm = messagebox.askyesno("Cerrar sesión", "¿Deseas salir del sistema?")
+        if confirm:
+            root.destroy()
+
+    # --- Asignar eventos ---
+    btn_subir.configure(command=subir)
+    btn_descargar.configure(command=descargar)
+    btn_eliminar.configure(command=eliminar)
+    btn_listar.configure(command=actualizar_lista)
+    btn_logout.configure(command=logout)
+    listbox.bind('<<ListboxSelect>>', previsualizar)
+
+    # --- Inicializar lista ---
+    actualizar_lista()
+
+    root.mainloop()
+----------------------
+login_gui.py
+import customtkinter as ctk
+from tkinter import messagebox
+from backend.users import verificar_usuario
+from frontend.gui import crear_gui
+from frontend.admin_gui import crear_admin_gui
+import mysql.connector
+
+
+def crear_login():
+    ctk.set_appearance_mode("dark")
+    root = ctk.CTk()
+    root.title("Inicio de Sesión")
+    root.geometry("350x250")
+
+    frame = ctk.CTkFrame(root, corner_radius=10)
+    frame.pack(padx=20, pady=20, fill="both", expand=True)
+
+    label_title = ctk.CTkLabel(frame, text="Iniciar Sesión", font=("Arial", 18))
+    label_title.pack(pady=10)
+
+    entry_user = ctk.CTkEntry(frame, placeholder_text="Usuario")
+    entry_user.pack(pady=5)
+
+    entry_pass = ctk.CTkEntry(frame, placeholder_text="Contraseña", show="*")
+    entry_pass.pack(pady=5)
+
+    def login():
+        nombre = entry_user.get().strip()
+        contrasena = entry_pass.get().strip()
+
+        if not nombre or not contrasena:
+            messagebox.showwarning("Atención", "Por favor ingrese usuario y contraseña")
+            return
+
+        try:
+            user = verificar_usuario(nombre, contrasena)
+            if user:
+                rol = user["rol"]
+                messagebox.showinfo("Bienvenido", f"Hola {nombre} ({rol})")
+                root.destroy()
+
+                if rol == "admin":
+                    crear_admin_gui(user)
+                else:
+                    crear_gui(user)
+            else:
+                messagebox.showerror("Error", "Usuario o contraseña incorrectos")
+        except mysql.connector.Error as e:
+            messagebox.showerror("Error de conexión", f"No se pudo conectar con la base de datos:\n{e}")
+
+    btn_login = ctk.CTkButton(frame, text="Entrar", command=login)
+    btn_login.pack(pady=10)
+
+    root.mainloop()
+-----------------------------------

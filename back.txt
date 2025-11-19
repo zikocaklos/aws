@@ -1,0 +1,234 @@
+db.py
+import mysql.connector
+
+def conectar():
+    return mysql.connector.connect(
+        host="proyecto.cz2uso644fxd.us-east-2.rds.amazonaws.com",
+        user="admin",
+        password="admin123.,",
+        database="proyecto",
+        port=3306 
+    )
+
+def crear_tabla_usuarios():
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS usuarios (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            nombre VARCHAR(100) UNIQUE NOT NULL,
+            contrasena VARCHAR(256) NOT NULL,
+            rol VARCHAR(50) DEFAULT 'empleado'
+        )
+    """)
+    conn.commit()
+    conn.close()
+
+def crear_tabla_historial():
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS historial (
+            id INT AUTO_INCREMENT PRIMARY KEY,
+            usuario VARCHAR(100) NOT NULL,
+            accion VARCHAR(100) NOT NULL,
+            archivo VARCHAR(200) NOT NULL,
+            fecha DATETIME DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    conn.commit()
+    conn.close()
+------------------------------
+import mysql.connector
+from backend.db import conectar
+
+def registrar_accion(usuario: str, accion: str, archivo: str):
+    """
+    Registra una acción realizada por un usuario en la tabla 'historial'.
+
+    Parámetros:
+        usuario (str): Nombre del usuario que ejecuta la acción.
+        accion (str): Tipo de acción (subió, descargó, eliminó, etc.).
+        archivo (str): Nombre del archivo afectado.
+    """
+    try:
+        conn = conectar()
+        cursor = conn.cursor()
+
+        cursor.execute(
+            """
+            INSERT INTO historial (usuario, accion, archivo)
+            VALUES (%s, %s, %s)
+            """,
+            (usuario, accion, archivo)
+        )
+
+        conn.commit()
+        print(f"🧾 Acción registrada: {usuario} {accion} '{archivo}'")
+
+    except mysql.connector.Error as e:
+        print(f"⚠️ Error al registrar acción en la base de datos: {e}")
+
+    finally:
+        if conn.is_connected():
+            conn.close()
+---------------------------
+# main_backend.py
+import os
+from backend.db import crear_tabla_usuarios, crear_tabla_historial
+from backend.users import crear_usuario
+from flask import Flask, request, jsonify
+
+app = Flask(__name__)
+
+@app.route("/health", methods=["GET"])
+def health():
+    return jsonify({"status": "ok"}), 200
+
+@app.route("/create_admin", methods=["POST"])
+def create_admin():
+    """
+    POST JSON: {"nombre": "admin", "contrasena": "admin123"}
+    Use this to create an admin if you don't want to run python interactive.
+    """
+    data = request.get_json() or {}
+    nombre = data.get("nombre")
+    contrasena = data.get("contrasena")
+    if not nombre or not contrasena:
+        return jsonify({"error":"nombre and contrasena required"}), 400
+    try:
+        crear_usuario(nombre, contrasena, rol="admin")
+        return jsonify({"created": nombre}), 201
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+def main():
+    print("Iniciando backend: creando/verificando tablas...")
+    crear_tabla_usuarios()
+    crear_tabla_historial()
+    print("Tablas listas. Arrancando servidor healthcheck (Flask) en 127.0.0.1:5000")
+    # Ejecutar Flask en 127.0.0.1 para solo localmente (seguro). Cambia host/port si lo necesitas.
+    app.run(host="127.0.0.1", port=5000)
+
+if __name__ == "__main__":
+    main()
+--------------------------------
+import boto3
+from botocore.exceptions import NoCredentialsError, ClientError
+from backend.logs import registrar_accion
+
+BUCKET_NAME = "intelnegobucket"
+REGION_NAME = "us-east-2"
+
+s3 = boto3.client("s3", region_name=REGION_NAME)
+
+def subir_archivo(file_path: str, usuario: str = "desconocido") -> str:
+    """Sube un archivo local al bucket de S3 y registra la acción."""
+    try:
+        file_name = file_path.split("/")[-1]
+        s3.upload_file(file_path, BUCKET_NAME, file_name)
+        registrar_accion(usuario, "subió", file_name)
+        print(f"✅ Archivo '{file_name}' subido correctamente por {usuario}.")
+        return file_name
+    except FileNotFoundError:
+        print("❌ Archivo no encontrado.")
+    except NoCredentialsError:
+        print("❌ Credenciales de AWS no configuradas correctamente.")
+    except ClientError as e:
+        print(f"❌ Error al subir archivo: {e}")
+
+
+def listar_archivos() -> list:
+    """Obtiene una lista con los nombres de los archivos en el bucket."""
+    try:
+        files = s3.list_objects_v2(Bucket=BUCKET_NAME)
+        return [obj["Key"] for obj in files.get("Contents", [])]
+    except ClientError as e:
+        print(f"❌ Error al listar archivos: {e}")
+        return []
+
+
+def descargar_archivo(file_name: str, save_path: str, usuario: str = "desconocido") -> None:
+    """Descarga un archivo del bucket al sistema local y registra la acción."""
+    try:
+        s3.download_file(BUCKET_NAME, file_name, save_path)
+        registrar_accion(usuario, "descargó", file_name)
+        print(f"📥 Archivo '{file_name}' descargado por {usuario} en '{save_path}'.")
+    except ClientError as e:
+        print(f"❌ Error al descargar archivo: {e}")
+
+
+def eliminar_archivo(file_name: str, usuario: str = "desconocido") -> None:
+    """Elimina un archivo del bucket y registra la acción."""
+    try:
+        s3.delete_object(Bucket=BUCKET_NAME, Key=file_name)
+        registrar_accion(usuario, "eliminó", file_name)
+        print(f"🗑️ Archivo '{file_name}' eliminado del bucket por {usuario}.")
+    except ClientError as e:
+        print(f"❌ Error al eliminar archivo: {e}")
+
+
+def obtener_imagen(file_name: str) -> bytes:
+    """Obtiene los bytes de una imagen almacenada en el bucket."""
+    try:
+        obj = s3.get_object(Bucket=BUCKET_NAME, Key=file_name)
+        return obj["Body"].read()
+    except ClientError as e:
+        print(f"❌ Error al obtener imagen '{file_name}': {e}")
+        return b""
+----------------------------
+import hashlib
+import mysql.connector
+from backend.db import conectar
+
+
+def hash_password(password):
+    """Devuelve el hash SHA-256 de una contraseña."""
+    return hashlib.sha256(password.encode()).hexdigest()
+
+
+def crear_usuario(nombre, contrasena, rol="empleado"):
+    """Crea un usuario nuevo en la base de datos MySQL."""
+    conn = conectar()
+    cursor = conn.cursor()
+    try:
+        cursor.execute(
+            "INSERT INTO usuarios (nombre, contrasena, rol) VALUES (%s, %s, %s)",
+            (nombre, hash_password(contrasena), rol),
+        )
+        conn.commit()
+        print("✅ Usuario creado correctamente")
+    except mysql.connector.IntegrityError:
+        print("❌ El usuario ya existe")
+    except Exception as e:
+        print(f"⚠️ Error al crear usuario: {e}")
+    finally:
+        conn.close()
+
+
+def verificar_usuario(nombre, contrasena):
+    """Verifica si un usuario existe y la contraseña coincide."""
+    conn = conectar()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, rol, contrasena FROM usuarios WHERE nombre=%s", (nombre,)
+    )
+    user = cursor.fetchone()
+    conn.close()
+
+    if user and user[2] == hash_password(contrasena):
+        return {"id": user[0], "nombre": nombre, "rol": user[1]}
+    return None
+--------------------
+
+from PIL import Image, ImageTk
+import io
+
+def previsualizar_imagen(data: bytes, size=(200, 200)):
+    try:
+        image = Image.open(io.BytesIO(data))
+        image.thumbnail(size)
+        return ImageTk.PhotoImage(image)
+    except Exception as e:
+        print(f"❌ Error al previsualizar imagen: {e}")
+        return None
