@@ -1,15 +1,21 @@
 from fastapi import FastAPI, UploadFile, File
 from backend.db import conectar
-from backend.s3_client import subir_archivo_s3, listar_archivos_s3, eliminar_archivo_s3
+from backend.s3_client import (
+    upload_file_to_s3,
+    list_files_in_s3,
+    delete_file_from_s3
+)
 import os
 
 app = FastAPI()
 
+# ---------- HEALTH CHECK ----------
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-# ------------ USUARIOS ------------
+
+# ---------- USUARIOS ----------
 @app.get("/usuarios")
 def listar_usuarios():
     conn = conectar()
@@ -18,6 +24,7 @@ def listar_usuarios():
     data = cursor.fetchall()
     conn.close()
     return data
+
 
 @app.post("/login")
 def login(usuario: str, contrasena: str):
@@ -29,26 +36,35 @@ def login(usuario: str, contrasena: str):
     )
     user = cursor.fetchone()
     conn.close()
-    if user:
-        return {"login": True}
-    return {"login": False}
+    return {"login": bool(user)}
 
-# ------------ ARCHIVOS S3 ------------
+
+# ---------- S3: SUBIR ARCHIVOS ----------
 @app.post("/upload")
 async def upload(file: UploadFile = File(...)):
-    file_location = f"/tmp/{file.filename}"
-    with open(file_location, "wb") as f:
+    # Guardar archivo temporalmente
+    temp_path = f"/tmp/{file.filename}"
+    
+    with open(temp_path, "wb") as f:
         f.write(await file.read())
 
-    subir_archivo_s3(file_location, file.filename)
-    os.remove(file_location)
-    return {"upload": "ok"}
+    # Subir al bucket S3
+    upload_file_to_s3(temp_path, file.filename)
 
+    # Borrar archivo temporal
+    os.remove(temp_path)
+
+    return {"status": "uploaded", "filename": file.filename}
+
+
+# ---------- S3: LISTAR ARCHIVOS ----------
 @app.get("/files")
 def files():
-    return listar_archivos_s3()
+    return list_files_in_s3()
 
+
+# ---------- S3: ELIMINAR ARCHIVO ----------
 @app.delete("/files/{filename}")
 def delete_file(filename: str):
-    eliminar_archivo_s3(filename)
-    return {"delete": "ok"}
+    delete_file_from_s3(filename)
+    return {"status": "deleted", "filename": filename}
