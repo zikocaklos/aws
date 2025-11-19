@@ -25,12 +25,12 @@ def listar_usuarios():
     return data
 
 @app.post("/login")
-def login(usuario: str, contrasena: str):
+def login(nombre: str, contrasena: str):
     conn = conectar()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT * FROM usuarios WHERE usuario=%s AND contrasena=%s",
-        (usuario, contrasena)
+        "SELECT * FROM usuarios WHERE nombre=%s AND contrasena=%s",
+        (nombre, contrasena)
     )
     user = cursor.fetchone()
     conn.close()
