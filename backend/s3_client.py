@@ -8,19 +8,33 @@ REGION_NAME = "us-east-2"
 s3 = boto3.client("s3", region_name=REGION_NAME)
 
 def subir_archivo(file_path: str, usuario: str = "desconocido") -> str:
-    """Sube un archivo local al bucket de S3 y registra la acción."""
+    """
+    Sube un archivo local al bucket de S3 y registra la acción.
+    Render usa /tmp para archivos temporales, por eso funciona bien aquí.
+    """
     try:
         file_name = file_path.split("/")[-1]
+
+        # Subir archivo al bucket
         s3.upload_file(file_path, BUCKET_NAME, file_name)
+
+        # Registrar la acción (si tu logs.py lo maneja bien)
         registrar_accion(usuario, "subió", file_name)
+
         print(f"✅ Archivo '{file_name}' subido correctamente por {usuario}.")
         return file_name
+
     except FileNotFoundError:
         print("❌ Archivo no encontrado.")
+        return None
+
     except NoCredentialsError:
         print("❌ Credenciales de AWS no configuradas correctamente.")
+        return None
+
     except ClientError as e:
         print(f"❌ Error al subir archivo: {e}")
+        return None
 
 
 def listar_archivos() -> list:
