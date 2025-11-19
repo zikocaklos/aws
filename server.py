@@ -1,9 +1,9 @@
 from fastapi import FastAPI, UploadFile, File
 from backend.db import conectar
 from backend.s3_client import (
-    upload_file_to_s3,
-    list_files_in_s3,
-    delete_file_from_s3
+    subir_archivo,
+    listar_archivos,
+    eliminar_archivo
 )
 import os
 
@@ -48,8 +48,8 @@ async def upload(file: UploadFile = File(...)):
     with open(temp_path, "wb") as f:
         f.write(await file.read())
 
-    # Subir al bucket S3
-    upload_file_to_s3(temp_path, file.filename)
+    # Usar la función REAL de tu s3_client
+    subir_archivo(temp_path)
 
     # Borrar archivo temporal
     os.remove(temp_path)
@@ -60,11 +60,11 @@ async def upload(file: UploadFile = File(...)):
 # ---------- S3: LISTAR ARCHIVOS ----------
 @app.get("/files")
 def files():
-    return list_files_in_s3()
+    return listar_archivos()
 
 
 # ---------- S3: ELIMINAR ARCHIVO ----------
 @app.delete("/files/{filename}")
 def delete_file(filename: str):
-    delete_file_from_s3(filename)
+    eliminar_archivo(filename)
     return {"status": "deleted", "filename": filename}
